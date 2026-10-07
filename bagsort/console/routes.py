@@ -156,6 +156,22 @@ def route_table() -> list[Route]:
         Route("GET", "/api/export/audit.csv", "audit trail as CSV", "handle_export_audit"),
         Route("GET", "/api/export/sort.csv", "sort records as CSV", "handle_export_sort"),
         Route("GET", "/api/export/loads.csv", "load records as CSV", "handle_export_loads"),
+        # -- weight and balance ------------------------------------------
+        Route("POST", "/api/load/{flight}/limits", "configure weight/CG limits", "handle_load_limits_set"),
+        Route("GET", "/api/load/{flight}/limits", "read weight/CG limits", "handle_load_limits_get"),
+        Route("POST", "/api/load/weigh", "record a scale weighing", "handle_load_weigh"),
+        Route("GET", "/api/load/{flight}/weighings", "weighing records", "handle_load_weighings"),
+        Route("POST", "/api/load/{flight}/batches", "submit a batch and draft a plan", "handle_load_submit"),
+        Route("POST", "/api/load/{flight}/confirm", "confirm the draft plan", "handle_load_confirm"),
+        Route("POST", "/api/load/{flight}/rollback", "roll back to an ancestor version", "handle_load_rollback"),
+        Route("POST", "/api/load/{flight}/swap", "swap a loaded piece for a lighter one", "handle_load_swap"),
+        Route("GET", "/api/load/{flight}/sequence", "current loading order", "handle_load_sequence"),
+        Route("GET", "/api/load/{flight}/refusals", "refusals with reasons", "handle_load_refusals"),
+        Route("GET", "/api/load/{flight}/ledger", "weight ledger postings", "handle_load_ledger"),
+        Route("GET", "/api/load/{flight}/report", "weight-and-balance report", "handle_load_report"),
+        Route("GET", "/api/load/{flight}/verify", "cross-foot the load ledgers", "handle_load_verify"),
+        Route("GET", "/api/load/{flight}/versions", "plan version history", "handle_load_versions"),
+        Route("GET", "/api/export/load/{flight}/bundle.json", "load control export bundle", "handle_export_load_bundle"),
     ]
 
 

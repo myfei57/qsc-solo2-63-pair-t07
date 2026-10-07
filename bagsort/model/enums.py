@@ -23,6 +23,9 @@ class BagState(str, Enum):
     RECHECKED = "rechecked"
     LOADED = "loaded"
     DIVERTED = "diverted"
+    WEIGHED = "weighed"
+    LOAD_REJECTED = "load_rejected"
+    LOAD_SWAPPED_OUT = "load_swapped_out"
 
     @property
     def active(self) -> bool:
@@ -33,7 +36,19 @@ class BagState(str, Enum):
             BagState.INJECTED,
             BagState.SORTED,
             BagState.RECHECKED,
+            BagState.WEIGHED,
         )
+
+    @property
+    def loadable(self) -> bool:
+        """Whether the piece may be admitted into a load plan.
+
+        Only a weighed, not-yet-loaded piece counts. A rejected piece stays
+        rejected until a new weighing produces a new decision, and a piece
+        swapped out of a confirmed plan is retired from the counted set.
+        """
+
+        return self is BagState.WEIGHED
 
 class Verdict(str, Enum):
     """Result of comparing an observed (epoch, sequence) pair with the high-water mark."""

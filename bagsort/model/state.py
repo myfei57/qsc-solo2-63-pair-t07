@@ -15,10 +15,14 @@ from .entities import (
     Bag,
     ChuteAssignment,
     Flight,
+    LoadPlanVersion,
     LoadRecord,
+    Rejection,
     Sequence,
     SortRecord,
     TransferCommand,
+    WeighRecord,
+    WeightPosting,
 )
 from bagsort.errors import ValidationError
 
@@ -35,6 +39,10 @@ class State:
     transfer_commands: list[TransferCommand] = field(default_factory=list)
     load_records: list[LoadRecord] = field(default_factory=list)
     audit: list[AuditEntry] = field(default_factory=list)
+    weigh_records: list[WeighRecord] = field(default_factory=list)
+    weight_postings: list[WeightPosting] = field(default_factory=list)
+    load_plans: dict[str, list[LoadPlanVersion]] = field(default_factory=dict)
+    load_limits: dict[str, dict[str, Any]] = field(default_factory=dict)
     quota_limits: dict[str, int] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)
     sequence: Sequence = field(default_factory=Sequence)
@@ -53,6 +61,15 @@ class State:
             transfer_commands=list(self.transfer_commands),
             load_records=list(self.load_records),
             audit=list(self.audit),
+            weigh_records=list(self.weigh_records),
+            weight_postings=list(self.weight_postings),
+            load_plans={
+                flight_id: list(versions)
+                for flight_id, versions in self.load_plans.items()
+            },
+            load_limits={
+                flight_id: dict(limits) for flight_id, limits in self.load_limits.items()
+            },
             quota_limits=dict(self.quota_limits),
             counters=dict(self.counters),
             sequence=self.sequence,
@@ -74,6 +91,13 @@ class State:
             "transfer_commands": [command.as_dict() for command in self.transfer_commands],
             "load_records": [record.as_dict() for record in self.load_records],
             "audit": [entry.as_dict() for entry in self.audit],
+            "weigh_records": [record.as_dict() for record in self.weigh_records],
+            "weight_postings": [posting.as_dict() for posting in self.weight_postings],
+            "load_plans": {
+                flight_id: [version.as_dict() for version in versions]
+                for flight_id, versions in sorted(self.load_plans.items())
+            },
+            "load_limits": dict(sorted(self.load_limits.items())),
             "quota_limits": dict(sorted(self.quota_limits.items())),
             "counters": dict(sorted(self.counters.items())),
             "sequence": self.sequence.as_dict(),
@@ -122,6 +146,38 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
         ]
     elif kind == "load.append":
         state.load_records.append(LoadRecord.from_dict(payload["record"]))
+    elif kind == "weigh.append":
+        state.weigh_records.append(WeighRecord.from_dict(payload["record"]))
+    elif kind == "weight.post":
+        state.weight_postings.append(WeightPosting.from_dict(payload["posting"]))
+    elif kind == "loadplan.append":
+        version = LoadPlanVersion.from_dict(payload["version"])
+        state.load_plans.setdefault(version.flight_id, []).append(version)
+    elif kind == "loadplan.confirm":
+        flight_id = str(payload["flight_id"])
+        version_no = int(payload["version"])
+        confirmed_at = str(payload.get("confirmed_at", ""))
+        rejections = tuple(
+            Rejection.from_dict(item) for item in payload.get("rejections", [])
+        )
+        versions = state.load_plans.get(flight_id, [])
+        for index, plan_version in enumerate(versions):
+            if plan_version.version == version_no:
+                versions[index] = LoadPlanVersion(
+                    flight_id=plan_version.flight_id,
+                    version=plan_version.version,
+                    status="confirmed",
+                    entries=plan_version.entries,
+                    rejections=rejections or plan_version.rejections,
+                    parent_version=plan_version.parent_version,
+                    created_at=plan_version.created_at,
+                    confirmed_at=confirmed_at,
+                    note=plan_version.note,
+                    limits=plan_version.limits,
+                )
+                break
+    elif kind == "loadlimits.set":
+        state.load_limits[str(payload["flight_id"])] = dict(payload["limits"])
     elif kind == "audit.append":
         state.audit.append(AuditEntry.from_dict(payload["entry"]))
     elif kind == "quota.set":

@@ -50,6 +50,28 @@ class AuditChain:
         detail: dict[str, Any] | None = None,
         at: str | None = None,
     ) -> AuditEntry:
+        """Commit one linked audit entry in its own transaction."""
+
+        entry = self.build_entry(kind, subject, stage, detail, at)
+        with self._store.session() as session:
+            self.stamp(session, entry)
+        return entry
+
+    def build_entry(
+        self,
+        kind: str,
+        subject: str,
+        stage: str,
+        detail: dict[str, Any] | None = None,
+        at: str | None = None,
+    ) -> AuditEntry:
+        """Compute the next linked entry without committing it.
+
+        Exposed so a multi-command subsystem can stamp audit rows inside its
+        own store transaction: if that transaction rolls back, the audit rows
+        disappear with it instead of surviving as phantom history.
+        """
+
         if not self._topology.contains(stage):
             raise ValueError(f"unknown handling stage {stage!r}")
         sequence = self.count() + 1
@@ -67,20 +89,21 @@ class AuditChain:
             prev_digest=self.last_digest(),
             at=at or self._clock.now_iso(),
         )
-        digest = digest_of(entry)
-        entry = AuditEntry(
+        return AuditEntry(
             sequence=entry.sequence,
             kind=entry.kind,
             subject=entry.subject,
             detail=entry.detail,
             prev_digest=entry.prev_digest,
-            digest=digest,
+            digest=digest_of(entry),
             at=entry.at,
         )
-        with self._store.session() as session:
-            session.state.audit.append(entry)
-            session.record("audit.append", {"entry": entry.as_dict()}, entry.at)
-        return entry
+
+    def stamp(self, session: object, entry: AuditEntry) -> None:
+        """Append an entry already built by :meth:`build_entry` to a session."""
+
+        session.state.audit.append(entry)
+        session.record("audit.append", {"entry": entry.as_dict()}, entry.at)
 
     def for_subject(self, subject: str) -> list[AuditEntry]:
         return [entry for entry in self.entries() if entry.subject == subject]

@@ -239,6 +239,210 @@ class LoadRecord:
 
 
 @dataclass(frozen=True)
+class WeightPosting:
+    """One legible movement in a flight's weight ledger.
+
+    The ledger is a signed, append-only account: loading posts ``+weight``
+    (kind ``load``), removing a piece during a rollback or swap posts
+    ``-weight`` (kind ``release``). ``bag_id`` plus ``plan_version`` make every
+    posting traceable to the exact plan entry that authorised it, so the same
+    piece can never be counted in two batches: the ledger and the plan can be
+    cross-footed per bag.
+    """
+
+    flight_id: str
+    bag_id: str
+    delta: float
+    kind: str
+    plan_version: int
+    at: str
+    ref: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "flight_id": self.flight_id,
+            "bag_id": self.bag_id,
+            "delta": self.delta,
+            "kind": self.kind,
+            "plan_version": self.plan_version,
+            "at": self.at,
+            "ref": self.ref,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "WeightPosting":
+        return cls(
+            flight_id=str(raw["flight_id"]),
+            bag_id=str(raw["bag_id"]),
+            delta=float(raw.get("delta", 0.0)),
+            kind=str(raw.get("kind", "")),
+            plan_version=int(raw.get("plan_version", 0)),
+            at=str(raw.get("at", "")),
+            ref=str(raw.get("ref", "")),
+        )
+
+
+@dataclass(frozen=True)
+class WeighRecord:
+    """One weighing event. Readings are append-only; a re-weigh adds a row."""
+
+    bag_id: str
+    flight_id: str
+    weight: float
+    scale_id: str
+    at: str
+    accepted: bool = True
+    reason: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "bag_id": self.bag_id,
+            "flight_id": self.flight_id,
+            "weight": self.weight,
+            "scale_id": self.scale_id,
+            "at": self.at,
+            "accepted": self.accepted,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "WeighRecord":
+        return cls(
+            bag_id=str(raw["bag_id"]),
+            flight_id=str(raw.get("flight_id", "")),
+            weight=float(raw.get("weight", 0.0)),
+            scale_id=str(raw.get("scale_id", "")),
+            at=str(raw.get("at", "")),
+            accepted=bool(raw.get("accepted", True)),
+            reason=str(raw.get("reason", "")),
+        )
+
+
+@dataclass(frozen=True)
+class Rejection:
+    """A refusal decision with machine-readable code, Chinese reason and evidence."""
+
+    bag_id: str
+    code: str
+    reason: str
+    at: str
+    evidence: dict[str, Any] = field(default_factory=dict)
+    audit_sequence: int = 0
+    audit_digest: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "bag_id": self.bag_id,
+            "code": self.code,
+            "reason": self.reason,
+            "at": self.at,
+            "evidence": _clean(self.evidence),
+            "audit_sequence": self.audit_sequence,
+            "audit_digest": self.audit_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Rejection":
+        return cls(
+            bag_id=str(raw["bag_id"]),
+            code=str(raw.get("code", "")),
+            reason=str(raw.get("reason", "")),
+            at=str(raw.get("at", "")),
+            evidence=_clean(raw.get("evidence", {})),
+            audit_sequence=int(raw.get("audit_sequence", 0)),
+            audit_digest=str(raw.get("audit_digest", "")),
+        )
+
+
+@dataclass(frozen=True)
+class LoadEntry:
+    """One confirmed (or drafted) position in a loading sequence."""
+
+    order: int
+    bag_id: str
+    weight: float
+    position: str
+    arm: float
+    side: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "order": self.order,
+            "bag_id": self.bag_id,
+            "weight": self.weight,
+            "position": self.position,
+            "arm": self.arm,
+            "side": self.side,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "LoadEntry":
+        return cls(
+            order=int(raw.get("order", 0)),
+            bag_id=str(raw["bag_id"]),
+            weight=float(raw.get("weight", 0.0)),
+            position=str(raw.get("position", "")),
+            arm=float(raw.get("arm", 0.0)),
+            side=str(raw.get("side", "")),
+        )
+
+
+@dataclass(frozen=True)
+class LoadPlanVersion:
+    """An immutable version of one flight's loading plan.
+
+    Confirmed versions are never mutated: confirming, rolling back and swapping
+    all append a new version whose ``parent_version`` points at the one it
+    replaced, which is what makes a swap rollback replayable and auditable.
+    """
+
+    flight_id: str
+    version: int
+    status: str  # draft | confirmed | superseded
+    entries: tuple[LoadEntry, ...] = ()
+    rejections: tuple[Rejection, ...] = ()
+    parent_version: int = 0
+    created_at: str = ""
+    confirmed_at: str = ""
+    note: str = ""
+    limits: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "flight_id": self.flight_id,
+            "version": self.version,
+            "status": self.status,
+            "entries": [entry.as_dict() for entry in self.entries],
+            "rejections": [rejection.as_dict() for rejection in self.rejections],
+            "parent_version": self.parent_version,
+            "created_at": self.created_at,
+            "confirmed_at": self.confirmed_at,
+            "note": self.note,
+            "limits": _clean(self.limits),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "LoadPlanVersion":
+        return cls(
+            flight_id=str(raw["flight_id"]),
+            version=int(raw.get("version", 0)),
+            status=str(raw.get("status", "draft")),
+            entries=tuple(LoadEntry.from_dict(item) for item in raw.get("entries", [])),
+            rejections=tuple(
+                Rejection.from_dict(item) for item in raw.get("rejections", [])
+            ),
+            parent_version=int(raw.get("parent_version", 0)),
+            created_at=str(raw.get("created_at", "")),
+            confirmed_at=str(raw.get("confirmed_at", "")),
+            note=str(raw.get("note", "")),
+            limits=_clean(raw.get("limits", {})),
+        )
+
+    def bag_ids(self) -> frozenset[str]:
+        return frozenset(entry.bag_id for entry in self.entries)
+
+
+@dataclass(frozen=True)
 class Sequence:
     epoch: int = 0
     next_value: int = 0

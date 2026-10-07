@@ -18,6 +18,7 @@ STAGES: tuple[str, ...] = (
     "sorter",
     "chute",
     "recheck",
+    "weigh",
     "belt",
     "audit",
 )

@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="print the store status")
     commands.add_parser("export", help="print audit and sort records as CSV")
 
+    load_export = commands.add_parser(
+        "load-export", help="print a flight's weight-and-balance export bundle"
+    )
+    load_export.add_argument("flight", help="flight id, e.g. T1-CA1234")
+
     seed = commands.add_parser("seed", help="seed default lanes and flights")
     seed.add_argument("--persist", action="store_true", help="write a snapshot afterwards")
 
@@ -118,6 +123,14 @@ def _command_export(plant: Plant) -> int:
     return 0
 
 
+def _command_load_export(plant: Plant, flight_id: str) -> int:
+    from .load.export import export_bundle
+
+    bundle = export_bundle(plant.loadmaster, flight_id)
+    print(json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if '"ok": true' in bundle["manifest.json"] else 1
+
+
 def _command_seed(store: Store, plant: Plant, args: argparse.Namespace) -> int:
     seeded = seed_defaults(plant)
     print(json.dumps(seeded, ensure_ascii=False, sort_keys=True))
@@ -159,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _command_status(store, plant)
     if args.command == "export":
         return _command_export(plant)
+    if args.command == "load-export":
+        return _command_load_export(plant, args.flight)
     if args.command == "seed":
         return _command_seed(store, plant, args)
     if args.command == "reset":

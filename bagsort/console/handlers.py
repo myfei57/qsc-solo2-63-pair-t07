@@ -8,7 +8,14 @@ from bagsort.model.validate import validate_flight
 from bagsort.reporting import csv_export
 from bagsort.sequence.allocator import preview
 from bagsort.store.replay import replay
-from .http import Request, Response, csv_response, json_response, text_response
+from .http import (
+    Request,
+    RequestError,
+    Response,
+    csv_response,
+    json_response,
+    text_response,
+)
 from .routes import route_table
 from .version import version_info
 
@@ -778,3 +785,146 @@ def handle_export_sort(server, request: Request) -> Response:
 def handle_export_loads(server, request: Request) -> Response:
     records = _plant(server).belt.loads()
     return csv_response(csv_export.render(csv_export.LOAD_COLUMNS, csv_export.load_rows(records)))
+
+
+# ---------------------------------------------------------------------------
+# weight and balance
+# ---------------------------------------------------------------------------
+
+
+def handle_load_limits_set(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    limits = plant.configure_load(flight_id, request.payload)
+    return json_response(limits.as_dict(), status=201)
+
+
+def handle_load_limits_get(server, request: Request) -> Response:
+    return json_response(_plant(server).loadmaster.limits(request.param("flight")).as_dict())
+
+
+def handle_load_weigh(server, request: Request) -> Response:
+    plant = _plant(server)
+    bag_id = request.required("bag_id")
+    weight = request.payload.get("weight")
+    if weight is None:
+        raise RequestError(400, "field weight is required")
+    try:
+        weight = float(weight)
+    except (TypeError, ValueError) as exc:
+        raise RequestError(400, "field weight must be a number") from exc
+    scale_id = request.str_field("scale_id", "SC1")
+    result = plant.weigh_bag(bag_id, weight, scale_id=scale_id)
+    return json_response(
+        {
+            "record": result.record.as_dict(),
+            "accepted": result.accepted,
+            "bag": result.bag.as_dict() if result.bag else None,
+        },
+        status=201 if result.accepted else 200,
+    )
+
+
+def handle_load_weighings(server, request: Request) -> Response:
+    plant = _plant(server)
+    records = plant.loadmaster.weighings()
+    flight_id = request.param("flight")
+    records = [record for record in records if record.flight_id == flight_id]
+    return json_response([record.as_dict() for record in records])
+
+
+def handle_load_submit(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    bag_ids = list(request.payload.get("bag_ids", []))
+    if not isinstance(bag_ids, list) or not all(isinstance(item, str) for item in bag_ids):
+        raise RequestError(400, "field bag_ids must be a list of bag ids")
+    batch = request.payload.get("batch")
+    batch_value = int(batch) if batch is not None else None
+    draft = plant.submit_load_batch(flight_id, bag_ids, batch=batch_value)
+    return json_response(draft.as_dict(), status=201)
+
+
+def handle_load_confirm(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    version = request.payload.get("version")
+    confirmed = plant.confirm_load(flight_id, int(version) if version is not None else None)
+    return json_response(confirmed.as_dict())
+
+
+def handle_load_rollback(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    version = request.int_field("version", -1)
+    if version < 0:
+        raise RequestError(400, "field version must be an ancestor version >= 0")
+    revision = plant.rollback_load(flight_id, version)
+    return json_response(revision.as_dict())
+
+
+def handle_load_swap(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    out_bag = request.required("out_bag_id")
+    in_bag = request.required("in_bag_id")
+    revision = plant.swap_load(flight_id, out_bag, in_bag)
+    return json_response(revision.as_dict())
+
+
+def handle_load_sequence(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    return json_response(
+        [entry.as_dict() for entry in plant.loadmaster.sequence(flight_id)]
+    )
+
+
+def handle_load_refusals(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    return json_response(
+        [rejection.as_dict() for rejection in plant.loadmaster.refusals(flight_id)]
+    )
+
+
+def handle_load_ledger(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    ledger = plant.loadmaster.ledger
+    return json_response(
+        {
+            "balance": ledger.balance(flight_id),
+            "counted_bags": sorted(ledger.counted_bags(flight_id)),
+            "postings": [
+                posting.as_dict() for posting in ledger.postings(flight_id)
+            ],
+        }
+    )
+
+
+def handle_load_report(server, request: Request) -> Response:
+    return json_response(
+        _plant(server).loadmaster.loading_report(request.param("flight"))
+    )
+
+
+def handle_load_verify(server, request: Request) -> Response:
+    return json_response(
+        _plant(server).loadmaster.verify_flight(request.param("flight"))
+    )
+
+
+def handle_load_versions(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    return json_response(
+        [version.as_dict() for version in plant.loadmaster.versions(flight_id)]
+    )
+
+
+def handle_export_load_bundle(server, request: Request) -> Response:
+    from bagsort.load.export import export_bundle
+
+    bundle = export_bundle(_plant(server).loadmaster, request.param("flight"))
+    return json_response(bundle)

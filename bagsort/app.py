@@ -21,6 +21,7 @@ from bagsort.flight.mapping import BagMapping
 from bagsort.flight.schedule import ScheduleBoard
 from bagsort.ids import IdFactory
 from bagsort.inject.injector import Injector
+from bagsort.load import LoadLimits, LoadMaster
 from bagsort.model.entities import Bag, Flight, Reading, SortRecord
 from bagsort.model.errors import unknown_bag
 from bagsort.ns.chutes import ChuteRegistry
@@ -67,6 +68,7 @@ class Plant:
     recheck: RecheckQueue
     belt: Belt
     quota: QuotaBook
+    loadmaster: LoadMaster
     audit: AuditChain
     report: PlantReport
 
@@ -107,6 +109,7 @@ class Plant:
         belt = Belt(store, clock, IdFactory("cmd"))
 
         audit = AuditChain(store, clock, handling_line())
+        loadmaster = LoadMaster(store, clock, audit, book)
         audit_subscriber = _AuditSubscriber(audit)
         for topic in (
             "bag.checked_in",
@@ -145,6 +148,7 @@ class Plant:
             recheck=recheck,
             belt=belt,
             quota=quota,
+            loadmaster=loadmaster,
             audit=audit,
             report=report,
         )
@@ -242,6 +246,46 @@ class Plant:
 
     def set_quota(self, flight_id: str, limit: int) -> int:
         return self.quota.set_limit(flight_id, limit)
+
+    # -- weight and balance ------------------------------------------------
+
+    def configure_load(self, flight_id: str, limits: dict | LoadLimits):
+        return self.loadmaster.configure(flight_id, limits)
+
+    def weigh_bag(self, bag_id: str, weight: float, scale_id: str = "SC1"):
+        result = self.loadmaster.weigh(bag_id, weight, scale_id=scale_id)
+        if result.accepted:
+            self.bus.publish(
+                "bag.weighed",
+                bag_id=bag_id,
+                weight=result.record.weight,
+                flight_id=result.record.flight_id,
+            )
+        return result
+
+    def submit_load_batch(self, flight_id: str, bag_ids: list[str], batch: int | None = None):
+        return self.loadmaster.submit_batch(flight_id, bag_ids, batch=batch)
+
+    def confirm_load(self, flight_id: str, version: int | None = None):
+        plan = self.loadmaster.confirm(flight_id, version)
+        self.bus.publish("load.confirmed", flight_id=flight_id, version=plan.version)
+        return plan
+
+    def rollback_load(self, flight_id: str, version: int):
+        plan = self.loadmaster.rollback_to(flight_id, version)
+        self.bus.publish("load.rolled_back", flight_id=flight_id, version=plan.version)
+        return plan
+
+    def swap_load(self, flight_id: str, out_bag_id: str, in_bag_id: str):
+        plan = self.loadmaster.swap(flight_id, out_bag_id, in_bag_id)
+        self.bus.publish(
+            "load.swapped",
+            flight_id=flight_id,
+            version=plan.version,
+            out_bag=out_bag_id,
+            in_bag=in_bag_id,
+        )
+        return plan
 
     def verify(self) -> bool:
         return self.audit.verify()
