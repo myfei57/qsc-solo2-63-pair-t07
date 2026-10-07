@@ -135,6 +135,20 @@ def route_table() -> list[Route]:
         Route("GET", "/api/quota/{flight}", "read one allowance", "handle_quota_for"),
         Route("POST", "/api/quota/consume", "consume allowance", "handle_quota_consume"),
         Route("POST", "/api/quota/release", "release allowance", "handle_quota_release"),
+        # -- load planning (weighing, weight envelope, loading order) ------
+        Route("POST", "/api/load/weigh", "record a bag weighing", "handle_load_weigh"),
+        Route("GET", "/api/load/weighings", "list weighing records", "handle_load_weighings"),
+        Route("GET", "/api/load/weighings/{bag}", "one bag weighing record", "handle_load_weighing"),
+        Route("POST", "/api/load/envelope", "set a flight weight and CG envelope", "handle_load_envelope_set"),
+        Route("GET", "/api/load/envelopes", "list weight envelopes", "handle_load_envelopes"),
+        Route("GET", "/api/load/envelope/{flight}", "read one weight envelope", "handle_load_envelope"),
+        Route("POST", "/api/load/policy", "choose overlimit policy", "handle_load_policy"),
+        Route("GET", "/api/load/policy", "read overlimit policy", "handle_load_policy_get"),
+        Route("POST", "/api/load/submit", "submit one bag to the loading plan", "handle_load_submit"),
+        Route("POST", "/api/load/plan", "plan a batch in arrival order", "handle_load_plan"),
+        Route("GET", "/api/load/decisions", "list load decisions", "handle_load_decisions"),
+        Route("GET", "/api/load/order/{flight}", "current loading order of a flight", "handle_load_order"),
+        Route("GET", "/api/load/account/{flight}", "per-entry weight account", "handle_load_account"),
         # -- audit --------------------------------------------------------
         Route("GET", "/api/audit", "list audit entries", "handle_audit"),
         Route("GET", "/api/audit/count", "audit entry count", "handle_audit_count"),
@@ -156,6 +170,8 @@ def route_table() -> list[Route]:
         Route("GET", "/api/export/audit.csv", "audit trail as CSV", "handle_export_audit"),
         Route("GET", "/api/export/sort.csv", "sort records as CSV", "handle_export_sort"),
         Route("GET", "/api/export/loads.csv", "load records as CSV", "handle_export_loads"),
+        Route("GET", "/api/export/weighings.csv", "weighing records as CSV", "handle_export_weighings"),
+        Route("GET", "/api/export/loadplan.csv", "load planning decisions as CSV", "handle_export_loadplan"),
     ]
 
 

@@ -21,6 +21,8 @@ from bagsort.flight.mapping import BagMapping
 from bagsort.flight.schedule import ScheduleBoard
 from bagsort.ids import IdFactory
 from bagsort.inject.injector import Injector
+from bagsort.loadplan.ledger import LoadLedger
+from bagsort.loadplan.planner import LoadPlanner
 from bagsort.model.entities import Bag, Flight, Reading, SortRecord
 from bagsort.model.errors import unknown_bag
 from bagsort.ns.chutes import ChuteRegistry
@@ -67,6 +69,7 @@ class Plant:
     recheck: RecheckQueue
     belt: Belt
     quota: QuotaBook
+    load: LoadPlanner
     audit: AuditChain
     report: PlantReport
 
@@ -105,6 +108,9 @@ class Plant:
         closer = FlightCloser(book)
         recheck = RecheckQueue(store, book, clock)
         belt = Belt(store, clock, IdFactory("cmd"))
+
+        load_ledger = LoadLedger(store, clock)
+        load = LoadPlanner(store, clock, book, load_ledger)
 
         audit = AuditChain(store, clock, handling_line())
         audit_subscriber = _AuditSubscriber(audit)
@@ -145,6 +151,7 @@ class Plant:
             recheck=recheck,
             belt=belt,
             quota=quota,
+            load=load,
             audit=audit,
             report=report,
         )
@@ -242,6 +249,65 @@ class Plant:
 
     def set_quota(self, flight_id: str, limit: int) -> int:
         return self.quota.set_limit(flight_id, limit)
+
+    # -- 载重配载 ----------------------------------------------------------
+
+    def weigh_bag(self, bag_id: str, weight_g: int, arm_cm: int = 0):
+        record = self.load.ledger.record_weighing(bag_id, weight_g, arm_cm)
+        self.bus.publish(
+            "bag.weighed", bag_id=bag_id, weight_g=weight_g, arm_cm=arm_cm
+        )
+        return record
+
+    def set_envelope(
+        self,
+        flight_id: str,
+        deadload_cap_g: int,
+        cg_min_cm: float,
+        cg_max_cm: float,
+        base_weight_g: int = 0,
+        base_moment_gcm: int = 0,
+        piece_max_g: int = 0,
+    ):
+        envelope = self.load.ledger.set_envelope(
+            flight_id,
+            deadload_cap_g,
+            cg_min_cm,
+            cg_max_cm,
+            base_weight_g=base_weight_g,
+            base_moment_gcm=base_moment_gcm,
+            piece_max_g=piece_max_g,
+        )
+        self.bus.publish(
+            "envelope.set",
+            flight_id=flight_id,
+            version=envelope.version,
+            deadload_cap_g=deadload_cap_g,
+        )
+        return envelope
+
+    def plan_loading(self, flight_id: str, bag_ids: list[str], batch: int = 1):
+        result = self.load.plan(flight_id, list(bag_ids), batch)
+        for decision in result.decisions:
+            self.bus.publish(
+                f"loadplan.{decision.kind}",
+                bag_id=decision.bag_id,
+                flight_id=flight_id,
+                batch=batch,
+                reason=decision.reason,
+            )
+        return result
+
+    def submit_loading(self, bag_id: str, flight_id: str, batch: int = 1):
+        decision = self.load.submit(bag_id, flight_id, batch)
+        self.bus.publish(
+            f"loadplan.{decision.kind}",
+            bag_id=bag_id,
+            flight_id=flight_id,
+            batch=batch,
+            reason=decision.reason,
+        )
+        return decision
 
     def verify(self) -> bool:
         return self.audit.verify()

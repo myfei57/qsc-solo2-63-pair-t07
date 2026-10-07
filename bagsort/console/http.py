@@ -111,6 +111,19 @@ class Request:
             return value != 0
         raise RequestError(400, f"field {name} must be a boolean")
 
+    def float_field(self, name: str, default: float = 0.0) -> float:
+        value = self.payload.get(name, default)
+        if isinstance(value, bool):
+            raise RequestError(400, f"field {name} must be a number")
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError as exc:
+                raise RequestError(400, f"field {name} must be a number") from exc
+        raise RequestError(400, f"field {name} must be a number")
+
     def required(self, name: str) -> str:
         value = self.str_field(name)
         if not value.strip():

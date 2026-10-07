@@ -659,6 +659,114 @@ def handle_quota_release(server, request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# load planning: weighing, envelope, plan/order/account
+# ---------------------------------------------------------------------------
+
+
+def handle_load_weigh(server, request: Request) -> Response:
+    plant = _plant(server)
+    record = plant.weigh_bag(
+        request.required("bag_id"),
+        request.int_field("weight_g"),
+        request.int_field("arm_cm"),
+    )
+    return json_response(record.as_dict(), status=201)
+
+
+def handle_load_weighings(server, request: Request) -> Response:
+    records = _plant(server).load.ledger.weighings()
+    return json_response([record.as_dict() for record in records])
+
+
+def handle_load_weighing(server, request: Request) -> Response:
+    record = _plant(server).load.ledger.weighing(request.param("bag"))
+    if record is None:
+        return json_response({"error": "no weighing on record"}, status=404)
+    return json_response(record.as_dict())
+
+
+def handle_load_envelope_set(server, request: Request) -> Response:
+    plant = _plant(server)
+    envelope = plant.set_envelope(
+        request.required("flight_id"),
+        request.int_field("deadload_cap_g"),
+        request.float_field("cg_min_cm"),
+        request.float_field("cg_max_cm"),
+        request.int_field("base_weight_g"),
+        request.int_field("base_moment_gcm"),
+        request.int_field("piece_max_g"),
+    )
+    return json_response(envelope.as_dict(), status=201)
+
+
+def handle_load_envelopes(server, request: Request) -> Response:
+    return json_response([item.as_dict() for item in _plant(server).load.ledger.envelopes()])
+
+
+def handle_load_envelope(server, request: Request) -> Response:
+    envelope = _plant(server).load.ledger.envelope(request.param("flight"))
+    if envelope is None:
+        return json_response({"error": "no envelope on record"}, status=404)
+    return json_response(envelope.as_dict())
+
+
+def handle_load_policy(server, request: Request) -> Response:
+    plant = _plant(server)
+    plant.load.set_policy(request.required("policy"))
+    return json_response({"policy": plant.load.policy.value})
+
+
+def handle_load_policy_get(server, request: Request) -> Response:
+    return json_response({"policy": _plant(server).load.policy.value})
+
+
+def handle_load_submit(server, request: Request) -> Response:
+    plant = _plant(server)
+    decision = plant.submit_loading(
+        request.required("bag_id"),
+        request.required("flight_id"),
+        request.int_field("batch", 1),
+    )
+    return json_response(decision.as_dict(), status=201)
+
+
+def handle_load_plan(server, request: Request) -> Response:
+    plant = _plant(server)
+    items = request.list_payload()
+    raw_bags = request.payload.get("bag_ids") if not items else None
+    bag_ids = [str(item) for item in items]
+    if raw_bags is not None:
+        if not isinstance(raw_bags, list):
+            return json_response({"error": "bag_ids must be an array"}, status=400)
+        bag_ids = [str(item) for item in raw_bags]
+    result = plant.plan_loading(
+        request.required("flight_id"),
+        bag_ids,
+        request.int_field("batch", 1),
+    )
+    return json_response(result.as_dict(), status=201)
+
+
+def handle_load_decisions(server, request: Request) -> Response:
+    flight_id = request.query_str("flight_id") or None
+    return json_response(_plant(server).load.decisions_view(flight_id))
+
+
+def handle_load_order(server, request: Request) -> Response:
+    plant = _plant(server)
+    flight_id = request.param("flight")
+    order = plant.load.loading_order(flight_id)
+    envelope = plant.load.ledger.envelope(flight_id)
+    if envelope is None:
+        return json_response({"error": "no envelope on record"}, status=404)
+    return json_response({"flight_id": flight_id, "order": order, "count": len(order)})
+
+
+def handle_load_account(server, request: Request) -> Response:
+    return json_response(_plant(server).load.account(request.param("flight")))
+
+
+# ---------------------------------------------------------------------------
 # audit
 # ---------------------------------------------------------------------------
 
@@ -778,3 +886,18 @@ def handle_export_sort(server, request: Request) -> Response:
 def handle_export_loads(server, request: Request) -> Response:
     records = _plant(server).belt.loads()
     return csv_response(csv_export.render(csv_export.LOAD_COLUMNS, csv_export.load_rows(records)))
+
+
+def handle_export_weighings(server, request: Request) -> Response:
+    records = _plant(server).load.ledger.weighings()
+    return csv_response(
+        csv_export.render(csv_export.WEIGHING_COLUMNS, csv_export.weighing_rows(records))
+    )
+
+
+def handle_export_loadplan(server, request: Request) -> Response:
+    flight_id = request.query_str("flight_id") or None
+    decisions = _plant(server).load.ledger.decisions(flight_id)
+    return csv_response(
+        csv_export.render(csv_export.LOADPLAN_COLUMNS, csv_export.loadplan_rows(decisions))
+    )

@@ -48,9 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--cycles", type=int, default=6, help="bags to check in")
     demo.add_argument("--persist", action="store_true", help="write a snapshot afterwards")
 
+    load_demo = commands.add_parser("loaddemo", help="run the load planning scenario")
+    load_demo.add_argument("--persist", action="store_true", help="write a snapshot afterwards")
+
     commands.add_parser("report", help="print the plant report")
     commands.add_parser("status", help="print the store status")
     commands.add_parser("export", help="print audit and sort records as CSV")
+    commands.add_parser("export-loadplan", help="print weighing and load decisions as CSV")
 
     seed = commands.add_parser("seed", help="seed default lanes and flights")
     seed.add_argument("--persist", action="store_true", help="write a snapshot afterwards")
@@ -118,6 +122,55 @@ def _command_export(plant: Plant) -> int:
     return 0
 
 
+def _command_load_demo(store: Store, plant: Plant, args: argparse.Namespace) -> int:
+    from .loadplan.demo import load_demo_invariants_hold, run_load_demo
+    from .reporting import csv_export
+
+    summary = run_load_demo(plant)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    print("# ---- weighing records ----")
+    print(
+        csv_export.render(
+            csv_export.WEIGHING_COLUMNS,
+            csv_export.weighing_rows(plant.load.ledger.weighings()),
+        ),
+        end="",
+    )
+    print("# ---- load decisions ----")
+    print(
+        csv_export.render(
+            csv_export.LOADPLAN_COLUMNS,
+            csv_export.loadplan_rows(plant.load.ledger.decisions()),
+        ),
+        end="",
+    )
+    if args.persist:
+        store.persist()
+    return 0 if load_demo_invariants_hold(summary) else 1
+
+
+def _command_export_loadplan(plant: Plant) -> int:
+    from .reporting import csv_export
+
+    print("# ---- weighing records ----")
+    print(
+        csv_export.render(
+            csv_export.WEIGHING_COLUMNS,
+            csv_export.weighing_rows(plant.load.ledger.weighings()),
+        ),
+        end="",
+    )
+    print("# ---- load decisions ----")
+    print(
+        csv_export.render(
+            csv_export.LOADPLAN_COLUMNS,
+            csv_export.loadplan_rows(plant.load.ledger.decisions()),
+        ),
+        end="",
+    )
+    return 0
+
+
 def _command_seed(store: Store, plant: Plant, args: argparse.Namespace) -> int:
     seeded = seed_defaults(plant)
     print(json.dumps(seeded, ensure_ascii=False, sort_keys=True))
@@ -153,12 +206,16 @@ def main(argv: list[str] | None = None) -> int:
         return _command_serve(store, plant, args)
     if args.command == "demo":
         return _command_demo(store, plant, args)
+    if args.command == "loaddemo":
+        return _command_load_demo(store, plant, args)
     if args.command == "report":
         return _command_report(plant)
     if args.command == "status":
         return _command_status(store, plant)
     if args.command == "export":
         return _command_export(plant)
+    if args.command == "export-loadplan":
+        return _command_export_loadplan(plant)
     if args.command == "seed":
         return _command_seed(store, plant, args)
     if args.command == "reset":
